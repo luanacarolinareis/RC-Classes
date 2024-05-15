@@ -1,0 +1,6 @@
+jorge;mtu67;administrador
+manuel;zpt567;aluno
+joana;azq1212;professor
+henrique;hcm04;aluno
+joao;123;administrador
+ines;ifar10;professor
