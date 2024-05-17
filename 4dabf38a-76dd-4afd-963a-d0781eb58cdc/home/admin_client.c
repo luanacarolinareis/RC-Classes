@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
 
     // Porto do servidor obtidos através da linha de comando
     char *server_ip = argv[1];
-    int PORT_CONFIG = atoi(argv[2]);
+    int PORTO_CONFIG = atoi(argv[2]);
 
     struct sockaddr_in si_outra;
     int sockfd, n, opt = 0, c;
@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
     // Preenchimento da socket address structure
     memset((char *)&si_outra, 0, sizeof(si_outra));
     si_outra.sin_family = AF_INET;
-    si_outra.sin_port = htons(PORT_CONFIG);
+    si_outra.sin_port = htons(PORTO_CONFIG);
     if (inet_aton(server_ip, &si_outra.sin_addr) == 0)
         erro("ao converter endereço");
 
@@ -84,7 +84,6 @@ int main(int argc, char *argv[]) {
             if (n < 0)
                 erro("ao receber dados");
             client_type[n] = '\0';
-
 
             // Listar opções disponíveis para o tipo de cliente autenticado
             printf("----- OPÇÕES DISPONÍVEIS PARA %s -----\n", strupper(client_type));
