@@ -14,11 +14,13 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <signal.h>
+#include <sys/shm.h>
 
 #define MAX_USERNAME_LENGTH 50
 #define MAX_PASSWORD_LENGTH 50
 #define MAX_TYPE_LENGTH 20
 #define MAX_BUF_SIZE 512
+#define SHM_KEY_BASE 12345
 
 // Estrutura para armazenar informações de um utilizador
 typedef struct {
@@ -45,7 +47,11 @@ int aux = 0;
 User *users;
 Class *classes;
 int num_users = 0;
-int num_classes = 0;
+int* num_classes;
+
+// Variáveis globais para os identificadores de memória partilhada
+int shm_id_classes;
+int shm_id_num_classes;
 
 // Variáveis globais para os descritores de arquivo dos 'sockets'
 int sockfd_tcp, newsockfd_tcp, sockfd_udp;
@@ -58,11 +64,12 @@ void process_admins(int, struct sockaddr *, socklen_t);
 void erro(char *);
 void cleanup();
 void sigint_handler();
+int create_shared_memory(key_t , size_t);
 
 // Funções específicas para administradores
-void add_user(char *, char *, char *);
-void del_user(char *);
-void list_users();
+void add_user(int, char *, char *, char *, struct sockaddr *, socklen_t);
+void del_user(int, char *, struct sockaddr *, socklen_t);
+void list_users(int, struct sockaddr *, socklen_t);
 void quit_server();
 
 // Funções específicas para alunos e professores
@@ -73,8 +80,8 @@ void list_subscribed(int, char *);
 void subscribe_class(int, char *, char *);
 
 // Funções específicas para professores
-void create_class(char *, int);
-void send_content(char *, char *);
+void create_class(int, char *, int);
+void send_content(int, char *, char *);
 
 int main(int argc, char *argv[]) {
     // class_server {PORTO_TURMAS} {PORTO_CONFIG} {ficheiro de configuração}
@@ -125,12 +132,15 @@ int main(int argc, char *argv[]) {
     // Após terminar a leitura do ficheiro, libertar recursos
     fclose(file);
 
-    // Turmas iniciais para teste
-    create_class("rc", 17);
-    create_class("so", 20);
-    create_class("bd", 15);
-    create_class("aed", 10);
-    create_class("atd", 25);
+    // Inicializar memória partilhada para turmas
+    shm_id_classes = create_shared_memory(SHM_KEY_BASE, sizeof(Class) * 10);
+    classes = (Class *) shmat(shm_id_classes, NULL, 0);
+    shm_id_num_classes = create_shared_memory(SHM_KEY_BASE + 1, sizeof(int));
+    num_classes = (int *) shmat(shm_id_num_classes, NULL, 0);
+    if (num_classes == (void *) -1 || classes == (void *) -1) {
+        erro("ao anexar a memória partilhada");
+    }
+    *num_classes = 0;
 
     // Configurar o socket para 'PORTO_TURMAS' (TCP)
     if ((sockfd_tcp = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -171,6 +181,8 @@ int main(int argc, char *argv[]) {
         // CTRL + C para encerrar o servidor
         signal(SIGINT, sigint_handler);
 
+        aux = 0;
+
         FD_ZERO(&readfds);
         FD_SET(sockfd_tcp, &readfds);
         FD_SET(sockfd_udp, &readfds);
@@ -193,14 +205,16 @@ int main(int argc, char *argv[]) {
                 erro("no fork");
             else if (pid == 0) {
                 close(sockfd_tcp);
-                aux = 0;
                 auth_tcp(newsockfd_tcp);
                 if (strcmp(current_type, "aluno") == 0 || strcmp(current_type, "professor") == 0) {
+                    classes = (Class *) shmat(shm_id_classes, NULL, 0);
+                    num_classes = (int *) shmat(shm_id_num_classes, NULL, 0);
+                    if (classes == (void *) -1 || num_classes == (void *) -1) {
+                        erro("Erro ao anexar a memória partilhada");
+                    }
                     process_client(newsockfd_tcp);
                 }
                 exit(0);
-            } else {
-                close(newsockfd_tcp);
             }
         }
 
@@ -209,7 +223,6 @@ int main(int argc, char *argv[]) {
             printf("\nMensagem UDP recebida em 'PORTO_CONFIG'!\n");
             struct sockaddr_in cli_addr;
             socklen_t clilen_udp = sizeof(cli_addr);
-            aux = 0;
             auth_udp(sockfd_udp, (struct sockaddr *) &cli_addr, clilen_udp);
             if (strcmp(current_type, "administrador") == 0) {
                 process_admins(sockfd_udp, (struct sockaddr *) &cli_addr, clilen_udp);
@@ -224,7 +237,7 @@ void auth_tcp(int client_socket) {
     int n;
 
     // Enquanto o cliente não estiver autenticado...
-    while(aux != 1) {
+    while (aux != 1) {
         memset(buffer, 0, MAX_BUF_SIZE);
 
         // Receber o username do cliente atual
@@ -272,36 +285,44 @@ void auth_udp(int client_socket, struct sockaddr *client_addr, socklen_t client_
     char buffer[MAX_BUF_SIZE];
     int n;
 
-    // Receber o username do cliente atual
-    n = recvfrom(client_socket, buffer, MAX_BUF_SIZE, 0, client_addr, &client_len);
-    if (n < 0) {
-        printf("Erro: falha ao receber o username do cliente\n");
-        close(client_socket);
-        return;
-    }
-    buffer[n] = '\0';
-    strncpy(current_username, buffer, MAX_USERNAME_LENGTH);
+    while (aux != 1) {
+        memset(buffer, 0, MAX_BUF_SIZE);
 
-    // Receber a password do cliente atual
-    n = recvfrom(client_socket, buffer, MAX_BUF_SIZE, 0, client_addr, &client_len);
-    if (n < 0) {
-        printf("Erro: falha ao receber a password do cliente\n");
-        close(client_socket);
-        return;
-    }
-    buffer[n] = '\0';
-
-    // Verificar se as credenciais do cliente são válidas
-    printf("(UDP CLIENT) LOGIN %s %s\n", current_username, buffer);
-    for (int i = 0; i < num_users; i++) {
-        if (strcmp(users[i].username, current_username) == 0 && strcmp(users[i].password, buffer) == 0) {
-            aux = 1;
-            strcpy(current_type, users[i].type);
-            sendto(client_socket, "OK", strlen("OK"), 0, client_addr, client_len);
-            break;
+        // Receber o username do cliente atual
+        n = recvfrom(client_socket, buffer, MAX_BUF_SIZE, 0, client_addr, &client_len);
+        if (n < 0) {
+            printf("Erro: falha ao receber o username do cliente\n");
+            close(client_socket);
+            return;
         }
-        if ((i == (num_users - 1)) && aux == 0)
-            sendto(client_socket, "REJECTED", strlen("REJECTED"), 0, client_addr, client_len);
+        buffer[n] = '\0';
+        strncpy(current_username, buffer, MAX_USERNAME_LENGTH);
+
+        // Receber a password do cliente atual
+        n = recvfrom(client_socket, buffer, MAX_BUF_SIZE, 0, client_addr, &client_len);
+        if (n < 0) {
+            printf("Erro: falha ao receber a password do cliente\n");
+            close(client_socket);
+            return;
+        }
+        buffer[n] = '\0';
+
+        // Verificar se as credenciais do cliente são válidas
+        printf("(UDP CLIENT) LOGIN %s %s\n", current_username, buffer);
+
+        for (int i = 0; i < num_users; i++) {
+            if (strcmp(users[i].username, current_username) == 0 && strcmp(users[i].password, buffer) == 0) {
+                strcpy(current_type, users[i].type);
+                if (strcmp(users[i].type, "administrador") == 0) {
+                    aux = 1;
+                    sendto(client_socket, "OK", strlen("OK"), 0, client_addr, client_len);
+                } else
+                    sendto(client_socket, "CLIENT", strlen("CLIENT"), 0, client_addr, client_len);
+                break;
+            }
+            if ((i == (num_users - 1)) && aux == 0)
+                sendto(client_socket, "REJECTED", strlen("REJECTED"), 0, client_addr, client_len);
+        }
     }
 }
 
@@ -325,7 +346,8 @@ void process_client(int client_socket) {
 
             // Aluno ou professor pede para sair
             if (strcmp(buffer, "EXIT") == 0) {
-                break;
+                aux = 0;
+                close(client_socket);
             }
 
             // Aluno ou professor pede para listar turmas disponíveis
@@ -353,34 +375,42 @@ void process_client(int client_socket) {
             else if (strstr(buffer, "CREATE_CLASS") != NULL) {
                 char class_name[MAX_BUF_SIZE];
                 int max_capacity;
-                char* token;
-                token = strtok(NULL, " ");
+                char* token = strtok(buffer, " ");
 
                 // O próximo token é o nome da turma
-                if (token != NULL) strcpy(class_name, token);
-                token = strtok(NULL, " ");
+                if (token != NULL) {
+                    token = strtok(NULL, " ");
+                    strcpy(class_name, token);
+                }
 
                 // O próximo token é a capacidade máxima da turma
-                if (token != NULL) max_capacity = atoi(token);
+                if (token != NULL) {
+                    token = strtok(NULL, " ");
+                    max_capacity = atoi(token);
+                }
 
-                create_class(class_name, max_capacity);
+                create_class(client_socket, class_name, max_capacity);
             }
 
             // Professor pede para enviar conteúdo para uma turma
             else if (strstr(buffer, "SEND") != NULL) {
                 char class_name[MAX_BUF_SIZE];
                 char content[MAX_BUF_SIZE];
-                char* token;
-                token = strtok(NULL, " ");
+                char* token = strtok(NULL, " ");
 
                 // O próximo token é o nome da turma
-                if (token != NULL) strcpy(class_name, token);
+                if (token != NULL) {
+                    token = strtok(NULL, " ");
+                    strcpy(class_name, token);
+                }
                 token = strtok(NULL, " ");
 
-                // O próximo token é o conteúdo a enviar
-                if (token != NULL) strcpy(content, token);
+                if (token != NULL) {
+                    token = strtok(NULL, " ");
+                    strcpy(content, token);
+                }
 
-                send_content(content, class_name);
+                send_content(client_socket, content, class_name);
             }
         }
     } while (1);
@@ -390,6 +420,7 @@ void process_client(int client_socket) {
 void process_admins(int sockfd, struct sockaddr *client_addr, socklen_t client_len) {
     char buffer[MAX_BUF_SIZE];
     int n;
+    int ctrl = 1;
     sendto(sockfd, current_type, strlen(current_type), 0, client_addr, client_len);
 
     do {
@@ -405,7 +436,8 @@ void process_admins(int sockfd, struct sockaddr *client_addr, socklen_t client_l
 
             // Administrador pede para sair
             if (strcmp(buffer, "EXIT") == 0) {
-                break;
+                aux = 0;
+                ctrl = 0;
             }
 
             // Administrador pede para adicionar um utilizador
@@ -413,21 +445,27 @@ void process_admins(int sockfd, struct sockaddr *client_addr, socklen_t client_l
                 char username[MAX_BUF_SIZE];
                 char password[MAX_BUF_SIZE];
                 char type[MAX_BUF_SIZE];
-                char *token;
-                token = strtok(NULL, " ");
+                char *token = strtok(buffer, " ");
 
                 // O próximo token é o username
-                if (token != NULL) strcpy(username, token);
-                token = strtok(NULL, " ");
+                if (token != NULL) {
+                    token = strtok(NULL, " ");
+                    strcpy(username, token);
+                }
 
                 // O próximo token é a password
-                if (token != NULL) strcpy(password, token);
-                token = strtok(NULL, " ");
+                if (token != NULL) {
+                    token = strtok(NULL, " ");
+                    strcpy(password, token);
+                }
 
                 // O próximo token é o tipo de utilizador
-                if (token != NULL) strcpy(type, token);
+                if (token != NULL) {
+                    token = strtok(NULL, " ");
+                    strcpy(type, token);
+                }
 
-                add_user(username, password, type);
+                add_user(sockfd, username, password, type, client_addr, client_len);
             }
 
             // Administrador pede para remover um utilizador
@@ -437,12 +475,12 @@ void process_admins(int sockfd, struct sockaddr *client_addr, socklen_t client_l
                 if (space != NULL) {
                     strcpy(username, space + 1);
                 }
-                del_user(username);
+                del_user(sockfd, username, client_addr, client_len);
             }
 
             // Administrador pede para listar utilizadores
             else if (strcmp(buffer, "LIST") == 0) {
-                list_users();
+                list_users(sockfd, client_addr, client_len);
             }
 
             // Administrador pede para encerrar o servidor
@@ -450,7 +488,7 @@ void process_admins(int sockfd, struct sockaddr *client_addr, socklen_t client_l
                 quit_server();
             }
         }
-    } while (1);
+    } while (ctrl);
 }
 
 // Função de erro genérica
@@ -461,24 +499,50 @@ void erro(char *msg){
 
 // Função de limpeza de recursos ao encerrar o servidor
 void cleanup() {
+    // Desanexar e remover a memória partilhada das turmas
+    if (shmdt(classes) == -1) {
+        erro("ao desconectar a memória partilhada");
+    }
+    if (shmctl(shm_id_classes, IPC_RMID, NULL) == -1) {
+        erro("ao remover a memória partilhada");
+    }
+    // Desanexar e remover a memória partilhada do número de turmas
+    if (shmdt(num_classes) == -1) {
+        erro("ao desconectar a memória partilhada");
+    }
+    if (shmctl(shm_id_num_classes, IPC_RMID, NULL) == -1) {
+        erro("ao remover a memória partilhada");
+    }
+    // Fechar os sockets
     close(sockfd_tcp);
-    close(newsockfd_tcp);
     close(sockfd_udp);
 }
 
 // Função de manipulação de sinal para SIGINT (CTRL + C)
 void sigint_handler() {
-    cleanup();
     printf("A encerrar o servidor...\n");
+    cleanup();
     exit(0);
 }
 
+// Função para criar uma memória partilhada
+int create_shared_memory(key_t key, size_t size) {
+    int shm_id = shmget(key, size, IPC_CREAT | 0666);
+    if (shm_id < 0) {
+        erro("ao criar a memória partilhada");
+    }
+    return shm_id;
+}
+
 // Administrador: adicionar utilizador
-void add_user(char *username, char *password, char *type) {
+void add_user(int sockfd, char *username, char *password, char *type, struct sockaddr *client_addr, socklen_t client_len) {
+    char buffer[MAX_BUF_SIZE];
+
     // Verificar se o utilizador já existe
     for (int i = 0; i < num_users; i++) {
         if (strcmp(users[i].username, username) == 0) {
-            printf("Utilizador já existe!\n");
+            snprintf(buffer, sizeof(buffer),"REJECTED (ALREADY EXISTS)\n");
+            sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
             return;
         }
     }
@@ -496,12 +560,18 @@ void add_user(char *username, char *password, char *type) {
     }
     users[num_users] = user;
     num_users++;
-    printf("Utilizador '%s' adicionado com sucesso!\n", username);
+    snprintf(buffer, sizeof(buffer),"ACCEPTED\n");
+    sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
+    return;
 }
 
 // Administrador: remover utilizador
-void del_user(char *username) {
+void del_user(int sockfd, char *username, struct sockaddr *client_addr, socklen_t client_len) {
+    char buffer[MAX_BUF_SIZE];
+
+    // Procurar o utilizador a remover
     for (int i = 0; i < num_users; i++) {
+        // Remover o utilizador da lista de utilizadores
         if (strcmp(users[i].username, username) == 0) {
             for (int j = i; j < num_users - 1; j++) {
                 strcpy(users[j].username, users[j + 1].username);
@@ -514,22 +584,37 @@ void del_user(char *username) {
                 printf("Erro: ao realocar memória\n");
                 exit(1);
             }
-            printf("Utilizador '%s' removido com sucesso!\n", username);
+            snprintf(buffer, sizeof(buffer),"REMOVED\n");
+            sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
             return;
         }
     }
-    printf("Utilizador '%s' não encontrado!\n", username);
+    snprintf(buffer, sizeof(buffer),"REJECTED (NOT FOUND)\n");
+    sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
+    return;
 }
 
 // Administrador: listar utilizadores
-void list_users() {
+void list_users(int sockfd, struct sockaddr *client_addr, socklen_t client_len) {
+    char buffer[MAX_BUF_SIZE];
+    int offset = 0;
+
+    // Verificar se existem utilizadores registados
     if (num_users == 0) {
-        printf("Nenhum utilizador registado!\n");
+        snprintf(buffer, sizeof(buffer),"REJECTED (NO USERS)\n");
+        sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
         return;
     }
-    printf("----- Utilizadores registados -----\n\n");
+
+    // Iniciar com o cabeçalho dos utilizadores registados
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, "----- REGISTERED USERS -----\n\n");
+
     for (int i = 0; i < num_users; i++)
-        printf("Username: %-10s |       Tipo: %s\n", users[i].username, users[i].type);
+        // Acrescentar informações de cada utilizador
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset, "USER %s TYPE %s\n", users[i].username, users[i].type);
+
+    // Enviar a string buffer completa para o cliente
+    sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
 }
 
 // Administrador: encerrar o servidor
@@ -541,19 +626,20 @@ void quit_server() {
 void list_classes(int client_socket) {
     char buffer[MAX_BUF_SIZE * 2];
     int offset = 0;
+    int k = *num_classes;
 
-    if (num_classes == 0) {
-        snprintf(buffer, sizeof(buffer),"Nenhuma turma disponível!\n");
+    if (*num_classes == 0) {
+        snprintf(buffer, sizeof(buffer),"NO CLASSES\n");
         write(client_socket, buffer, strlen(buffer));
         return;
     }
     // Iniciar com o cabeçalho das turmas disponíveis
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset, "----- Turmas disponíveis -----\n\n");
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, "----- CLASSES AVAILABLE -----\n\n");
 
-    for (int i = 0; i < num_classes; i++) {
+    for (int i = 0; i < k; i++) {
         if (classes != NULL)
             // Acrescentar informações de cada turma
-            offset += snprintf(buffer + offset, sizeof(buffer) - offset, "Nome: %-10s |     Capacidade máxima: %d\n", classes[i].name, classes[i].max_capacity);
+            offset += snprintf(buffer + offset, sizeof(buffer) - offset, "CLASS %s\n", classes[i].name);
     }
 
     // Enviar a string buffer completa para o cliente
@@ -565,16 +651,17 @@ void list_subscribed(int client_socket, char *username) {
     char buffer[MAX_BUF_SIZE * 2];
     int offset = 0;
     int aux = 0;
+    int k = *num_classes;
 
-    if (num_classes == 0) {
-        snprintf(buffer, sizeof(buffer),"Nenhuma turma disponível!\n");
+    if (*num_classes == 0) {
+        snprintf(buffer, sizeof(buffer),"NO CLASSES\n");
         write(client_socket, buffer, strlen(buffer));
         return;
     }
     // Iniciar com o cabeçalho das turmas disponíveis
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset, "----- Turmas subscritas por %s -----\n\n", username);
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, "----- CLASSES SUBSCRIBED BY %s -----\n\n", username);
 
-    for (int i = 0; i < num_classes; i++) {
+    for (int i = 0; i < k; i++) {
         for (int j = 0; j < classes[i].num_students; j++) {
             if (classes[i].students[j] != NULL && strcmp(classes[i].students[j], username) == 0) {
                 // Acrescentar informações de cada turma subscrita
@@ -583,15 +670,16 @@ void list_subscribed(int client_socket, char *username) {
             }
         }
     }
-    if (aux == 0) snprintf(buffer + offset, sizeof(buffer) - offset,"Nenhuma turma subscrita!\n");
+    if (aux == 0) snprintf(buffer + offset, sizeof(buffer) - offset,"NO CLASS SUBSCRIBED\n");
     write(client_socket, buffer, strlen(buffer));
 }
 
 // Aluno: subscrever uma turma
 void subscribe_class(int client_socket, char *username, char *class_name) {
     char buffer[MAX_BUF_SIZE + 20];
-    for (int i = 0; i < num_classes; i++) {
-        printf("comparando %s com %s", classes[i].name, class_name);
+    int k = *num_classes;
+
+    for (int i = 0; i < k; i++) {
         if (strcmp(classes[i].name, class_name) == 0) {
             // Verificar se o utilizador já está inscrito nesta turma
             for (int j = 0; j < classes[i].num_students; j++) {
@@ -601,6 +689,7 @@ void subscribe_class(int client_socket, char *username, char *class_name) {
                     return;
                 }
             }
+
             // Inscrever o utilizador na turma, se houver capacidade
             if (classes[i].num_students < classes[i].max_capacity) {
                 strcpy(classes[i].students[classes[i].num_students], username);
@@ -614,65 +703,64 @@ void subscribe_class(int client_socket, char *username, char *class_name) {
             return;
         }
     }
+
     snprintf(buffer, sizeof(buffer),"REJECTED (NOT FOUND)\n");
     write(client_socket, buffer, strlen(buffer));
     return;
 }
 
 // Professor: criar uma turma
-void create_class(char *name, int max_capacity) {
+void create_class(int client_socket, char *name, int max_capacity) {
+    char buffer[MAX_BUF_SIZE + 20];
+    int k = *num_classes;
+
     // Verificar se a turma já existe
-    for (int i = 0; i < num_classes; i++) {
+    for (int i = 0; i < k; i++) {
         if (strcmp(classes[i].name, name) == 0) {
-            printf("A turma %s já existe!\n", classes[i].name);
+            snprintf(buffer, sizeof(buffer),"REJECTED (ALREADY EXISTS)\n");
+            write(client_socket, buffer, strlen(buffer));
             return;
         }
     }
 
-    // Adicionar a turma à lista de turmas
-    Class class;
-    strcpy(class.name, name);
-    class.max_capacity = max_capacity;
     char multicast[20];
-    snprintf(multicast, sizeof(multicast),"224.0.0.%d", num_classes + 1);
-    strcpy(class.multicast, multicast);
-    class.num_students = 0;
+    snprintf(multicast, sizeof(multicast),"224.0.0.%d", k + 1);
 
-    // Se ainda não existirem turmas, alocar memória para a primeira turma
-    if (num_classes == 0) {
-        classes = malloc(sizeof(Class));
-        if (classes == NULL) {
-            printf("Erro: ao alocar memória\n");
-            exit(1);
-        }
-    } else {
-        classes = realloc(classes, (num_classes + 1) * sizeof(Class));
-        if (classes == NULL) {
-            printf("Erro: ao realocar memória\n");
-            exit(1);
-        }
+    classes[k].students = (char (*)[MAX_USERNAME_LENGTH]) malloc(max_capacity * sizeof(*classes[k].students));
+    if (classes[k].students == NULL) {
+        erro("ao alocar memória para os alunos");
     }
-    classes[num_classes] = class;
-    classes[num_classes].students = malloc(max_capacity * sizeof(char[MAX_USERNAME_LENGTH]));
-    num_classes++;
-    printf("Turma '%s' criada com sucesso!\n", name);
+    (k)++;
+    (*num_classes) = k;
+
+    strcpy(classes[k-1].name, name);
+    classes[k-1].num_students = 0;
+    classes[k-1].max_capacity = max_capacity;
+    strcpy(classes[k-1].multicast, multicast);
+
+    snprintf(buffer, sizeof(buffer),"OK <%s>\n", multicast);
+    write(client_socket, buffer, strlen(buffer));
+
+    return;
 }
 
 // Professor: enviar conteúdo para uma turma
-void send_content(char *content, char *class_name) {
-    if (num_classes == 0) {
-        printf("Nenhuma turma disponível!\n");
-        return;
-    }
-    for (int i = 0; i < num_classes; i++) {
-        if (strcmp(classes[i].name, class_name) == 0) {
-            printf("A enviar conteúdo para a turma '%s'!\n", class_name);
-            printf("%s\n", content);
+void send_content(int client_socket, char *content, char *class_name) {
+    char buffer[MAX_BUF_SIZE];
+    int k = *num_classes;
 
-            // Completar lógica para enviar o conteúdo para os membros da turma, via multicast
-            // ...
+    for (int i = 0; i < k; i++) {
+        if (strcmp(classes[i].name, class_name) == 0) {
+            snprintf(buffer, sizeof(buffer),"SENT\n");
+            write(client_socket, buffer, strlen(buffer));
+
+            // Enviar conteúdo para todos os alunos inscritos na turma
+            // Multicast...
+
             return;
         }
     }
-    printf("Turma '%s' não encontrada!\n", class_name);
+    snprintf(buffer, sizeof(buffer),"REJECTED (CLASS DOESN'T EXIST)\n");
+    write(client_socket, buffer, strlen(buffer));
+    return;
 }

@@ -66,7 +66,7 @@ int main(int argc, char *argv[]) {
             printf("\nUsername: ");
             fgets(buffer, sizeof(buffer), stdin);
             buffer[strcspn(buffer, "\n")] = '\0';
-            n = send(sockfd, buffer, strlen(buffer), 0);
+            if (strlen(buffer) > 0) n = send(sockfd, buffer, strlen(buffer), 0);
             if (n < 0)
                 erro("ao enviar dados");
         } while(strlen(buffer) == 0);
@@ -74,7 +74,7 @@ int main(int argc, char *argv[]) {
             printf("Password: ");
             fgets(buffer, sizeof(buffer), stdin);
             buffer[strcspn(buffer, "\n")] = '\0';
-            n = send(sockfd, buffer, strlen(buffer), 0);
+            if (strlen(buffer) > 0) n = send(sockfd, buffer, strlen(buffer), 0);
             if (n < 0)
                 erro("ao enviar dados");
         } while(strlen(buffer) == 0);
@@ -126,38 +126,53 @@ int main(int argc, char *argv[]) {
                             if (n < 0)
                                 erro("ao enviar dados");
                         } else if (strcmp(client_type, "PROFESSOR") == 0) {
-                            printf("Nome da turma: ");
-                            fgets(class_name, sizeof(class_name), stdin);
-                            class_name[strcspn(class_name, "\n")] = '\0';
-                            printf("Capacidade máxima: ");
-                            scanf("%d", &max);
+                            do {
+                                printf("Nome da turma: ");
+                                fgets(class_name, sizeof(class_name), stdin);
+                                class_name[strcspn(class_name, "\n")] = '\0';
+                            } while(strlen(class_name) == 0);
+
+                            do {
+                                printf("Capacidade máxima: ");
+                                scanf("%d", &max);
+                            } while (max < 1);
+
                             strlower(class_name);
                             sprintf(buffer, "CREATE_CLASS %s %d", class_name, max);
-                            n = send(sockfd, buffer, strlen(buffer), 0);
+                            if (strlen(buffer) > 0) n = send(sockfd, buffer, strlen(buffer), 0);
                             if (n < 0)
                                 erro("ao enviar dados");
                         }
                         break;
                     case 3:
                         if (strcmp(client_type, "ALUNO") == 0) {
-                            printf("Nome da turma: ");
-                            fgets(class_name, sizeof(class_name), stdin);
-                            class_name[strcspn(class_name, "\n")] = '\0';
+                            do {
+                                printf("Nome da turma: ");
+                                fgets(class_name, sizeof(class_name), stdin);
+                                class_name[strcspn(class_name, "\n")] = '\0';
+                            } while(strlen(class_name) == 0);
+
                             strlower(class_name);
                             sprintf(buffer, "SUBSCRIBE_CLASS %s", class_name);
-                            n = send(sockfd, buffer, strlen(buffer), 0);
+                            if (strlen(buffer) > 0) n = send(sockfd, buffer, strlen(buffer), 0);
                             if (n < 0)
                                 erro("ao enviar dados");
                         } else if (strcmp(client_type, "PROFESSOR") == 0) {
-                            printf("Nome da turma: ");
-                            fgets(class_name, sizeof(class_name), stdin);
-                            class_name[strcspn(class_name, "\n")] = '\0';
-                            printf("Texto a enviar: ");
-                            fgets(text, sizeof(text), stdin);
-                            text[strcspn(text, "\n")] = '\0';
+                            do {
+                                printf("Nome da turma: ");
+                                fgets(class_name, sizeof(class_name), stdin);
+                                class_name[strcspn(class_name, "\n")] = '\0';
+                            } while(strlen(class_name) == 0);
+
+                            do {
+                                printf("Texto a enviar: ");
+                                fgets(text, sizeof(text), stdin);
+                                text[strcspn(text, "\n")] = '\0';
+                            } while(strlen(text) == 0);
+
                             strlower(class_name);
                             sprintf(buffer, "SEND %s %s", class_name, text);
-                            n = send(sockfd, buffer, strlen(buffer), 0);
+                            if (strlen(buffer) > 0) n = send(sockfd, buffer, strlen(buffer), 0);
                             if (n < 0)
                                 erro("ao enviar dados");
                         }
