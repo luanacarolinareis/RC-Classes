@@ -21,6 +21,8 @@
 #define MAX_TYPE_LENGTH 20
 #define MAX_BUF_SIZE 512
 #define SHM_KEY_BASE 12345
+#define MAX_CLASSES 10
+#define MAX_STUDENTS 50
 
 // Estrutura para armazenar informações de um utilizador
 typedef struct {
@@ -35,13 +37,16 @@ typedef struct {
     int max_capacity;
     char multicast[MAX_BUF_SIZE];
     int num_students;
-    char (*students)[MAX_USERNAME_LENGTH];
+    char students[MAX_STUDENTS][MAX_USERNAME_LENGTH];
 } Class;
 
 // Variáveis globais para armazenar o username e o tipo do utilizador autenticado
 char current_username[MAX_USERNAME_LENGTH];
 char current_type[MAX_TYPE_LENGTH];
 int aux = 0;
+
+// Variável global para o ficheiro de configuração
+FILE *file;
 
 // Variáveis globais para armazenar os utilizadores e turmas
 User *users;
@@ -104,7 +109,7 @@ int main(int argc, char *argv[]) {
     pid_t pid;
 
     // Abrir o ficheiro de configuração em modo de leitura
-    FILE *file = fopen(config_file, "r");
+    file = fopen(config_file, "r");
     if (file == NULL)
         erro("ao abrir o ficheiro de configuração");
 
@@ -133,8 +138,9 @@ int main(int argc, char *argv[]) {
     fclose(file);
 
     // Inicializar memória partilhada para turmas
-    shm_id_classes = create_shared_memory(SHM_KEY_BASE, sizeof(Class) * 10);
+    shm_id_classes = create_shared_memory(SHM_KEY_BASE, sizeof(Class) * MAX_CLASSES);
     classes = (Class *) shmat(shm_id_classes, NULL, 0);
+
     shm_id_num_classes = create_shared_memory(SHM_KEY_BASE + 1, sizeof(int));
     num_classes = (int *) shmat(shm_id_num_classes, NULL, 0);
     if (num_classes == (void *) -1 || classes == (void *) -1) {
@@ -560,6 +566,15 @@ void add_user(int sockfd, char *username, char *password, char *type, struct soc
     }
     users[num_users] = user;
     num_users++;
+
+    // Append do novo utilizador no ficheiro de texto
+    file = fopen("config.txt", "a");
+    if (file == NULL) {
+        erro("ao abrir o ficheiro de configuração");
+    }
+    fprintf(file, "%s;%s;%s\n", username, password, type);
+    fclose(file);
+
     snprintf(buffer, sizeof(buffer),"ACCEPTED\n");
     sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
     return;
@@ -568,6 +583,7 @@ void add_user(int sockfd, char *username, char *password, char *type, struct soc
 // Administrador: remover utilizador
 void del_user(int sockfd, char *username, struct sockaddr *client_addr, socklen_t client_len) {
     char buffer[MAX_BUF_SIZE];
+    int user_found = 0;
 
     // Procurar o utilizador a remover
     for (int i = 0; i < num_users; i++) {
@@ -581,16 +597,29 @@ void del_user(int sockfd, char *username, struct sockaddr *client_addr, socklen_
             num_users--;
             users = realloc(users, num_users * sizeof(User));
             if (users == NULL && num_users > 0) {
-                printf("Erro: ao realocar memória\n");
-                exit(1);
+                erro("ao realocar memória");
             }
-            snprintf(buffer, sizeof(buffer),"REMOVED\n");
-            sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
-            return;
+            user_found = 1;
+            break;
         }
     }
-    snprintf(buffer, sizeof(buffer),"REJECTED (NOT FOUND)\n");
-    sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
+
+    // Remover o utilizador do ficheiro de texto
+    if (user_found) {
+        // Reescrever o ficheiro sem o utilizador que foi removido
+        file = fopen("config.txt", "w");
+        if (file == NULL) {
+            erro("ao abrir o ficheiro de configuração");
+        }
+        for (int i = 0; i < num_users; i++)
+            fprintf(file, "%s;%s;%s\n", users[i].username, users[i].password, users[i].type);
+        fclose(file);
+        snprintf(buffer, sizeof(buffer), "REMOVED\n");
+        sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
+    } else {
+        snprintf(buffer, sizeof(buffer), "REJECTED (NOT FOUND)\n");
+        sendto(sockfd, buffer, strlen(buffer), 0, client_addr, client_len);
+    }
     return;
 }
 
@@ -639,7 +668,7 @@ void list_classes(int client_socket) {
     for (int i = 0; i < k; i++) {
         if (classes != NULL)
             // Acrescentar informações de cada turma
-            offset += snprintf(buffer + offset, sizeof(buffer) - offset, "CLASS %s\n", classes[i].name);
+            offset += snprintf(buffer + offset, sizeof(buffer) - offset, "CLASS %s %s %d %d\n", classes[i].name, classes[i].students[0], classes[i].max_capacity, classes[i].num_students);
     }
 
     // Enviar a string buffer completa para o cliente
@@ -653,7 +682,7 @@ void list_subscribed(int client_socket, char *username) {
     int aux = 0;
     int k = *num_classes;
 
-    if (*num_classes == 0) {
+    if (k == 0) {
         snprintf(buffer, sizeof(buffer),"NO CLASSES\n");
         write(client_socket, buffer, strlen(buffer));
         return;
@@ -726,17 +755,13 @@ void create_class(int client_socket, char *name, int max_capacity) {
     char multicast[20];
     snprintf(multicast, sizeof(multicast),"224.0.0.%d", k + 1);
 
-    classes[k].students = (char (*)[MAX_USERNAME_LENGTH]) malloc(max_capacity * sizeof(*classes[k].students));
-    if (classes[k].students == NULL) {
-        erro("ao alocar memória para os alunos");
-    }
     (k)++;
     (*num_classes) = k;
 
-    strcpy(classes[k-1].name, name);
-    classes[k-1].num_students = 0;
-    classes[k-1].max_capacity = max_capacity;
-    strcpy(classes[k-1].multicast, multicast);
+    strcpy(classes[k - 1].name, name);
+    classes[k - 1].num_students = 0;
+    classes[k - 1].max_capacity = max_capacity;
+    strcpy(classes[k - 1].multicast, multicast);
 
     snprintf(buffer, sizeof(buffer),"OK <%s>\n", multicast);
     write(client_socket, buffer, strlen(buffer));
