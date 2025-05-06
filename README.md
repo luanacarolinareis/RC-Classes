@@ -55,10 +55,6 @@ gcc -o admin_client admin_client.c
 ### 5. Configuração de utilizadores
 
 - O ficheiro [`config.txt`](config.txt)[2] contém os utilizadores registados no sistema, no formato: nome;password;tipo
-- Exemplo:
-  jorge;mtu67;administrador
-  joana;azq1212;professor
-  henrique;hcm04;aluno
 
 ### 6. Configuração de rede e routers
 
