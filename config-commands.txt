@@ -1,0 +1,165 @@
+Cliente1:
+
+#
+# This is a sample network config, please uncomment lines to configure the network
+#
+
+# Uncomment this line to load custom interface files
+# source /etc/network/interfaces.d/*
+
+# Static config for eth0
+auto eth0
+iface eth0 inet static
+	address 10.5.2.1
+	netmask 255.255.255.192
+	gateway 10.5.2.62
+	up echo nameserver 10.5.2.62 > /etc/resolv.conf
+
+# DHCP config for eth0
+#auto eth0
+#iface eth0 inet dhcp
+#	hostname dei-rc_container-3
+
+
+----------------------
+
+Cliente2:
+
+#
+# This is a sample network config, please uncomment lines to configure the network
+#
+
+# Uncomment this line to load custom interface files
+# source /etc/network/interfaces.d/*
+
+# Static config for eth0
+auto eth0
+iface eth0 inet static
+	address 10.5.2.2
+	netmask 255.255.255.192
+	gateway 10.5.2.62
+	up echo nameserver 10.5.2.62 > /etc/resolv.conf
+
+# DHCP config for eth0
+#auto eth0
+#iface eth0 inet dhcp
+#	hostname dei-rc_container-4
+
+
+----------------------
+
+Cliente3:
+
+#
+# This is a sample network config, please uncomment lines to configure the network
+#
+
+# Uncomment this line to load custom interface files
+# source /etc/network/interfaces.d/*
+
+# Static config for eth0
+auto eth0
+iface eth0 inet static
+	address 193.137.100.129
+	netmask 255.255.255.128
+	gateway 193.137.100.254
+	up echo nameserver 193.137.100.254 > /etc/resolv.conf
+
+# DHCP config for eth0
+#auto eth0
+#iface eth0 inet dhcp
+#	hostname dei-rc_container-1
+
+
+----------------------
+
+Servidor:
+
+#
+# This is a sample network config, please uncomment lines to configure the network
+#
+
+# Uncomment this line to load custom interface files
+# source /etc/network/interfaces.d/*
+
+# Static config for eth0
+auto eth0
+iface eth0 inet static
+	address 193.137.100.1
+	netmask 255.255.255.128
+	gateway 193.137.100.126
+	up echo nameserver 193.137.100.126 > /etc/resolv.conf
+
+# DHCP config for eth0
+#auto eth0
+#iface eth0 inet dhcp
+#	hostname dei-rc_container-2
+
+
+----------------------
+
+R1:
+
+config terminal
+ip multicast-routing
+interface FastEthernet0/0
+ip address 193.137.100.126 255.255.255.128
+no shutdown
+ip pim sparse-dense-mode 
+ip route 0.0.0.0 0.0.0.0 193.137.101.252
+
+interface FastEthernet0/1
+ip address 193.137.101.254 255.255.255.0
+no shutdown
+ip pim sparse-dense-mode
+end
+
+copy running-config startup-config
+
+----------------------
+
+R2:
+
+config terminal
+ip multicast-routing
+interface FastEthernet0/1
+ip address 193.137.100.254 255.255.255.128
+no shutdown
+ip pim sparse-dense-mode
+ip route 0.0.0.0 0.0.0.0 193.137.101.252
+
+interface FastEthernet0/0
+ip address 193.137.101.253 255.255.255.0
+no shutdown
+ip pim sparse-dense-mode
+end
+
+copy running-config startup-config
+
+----------------------
+
+R3 (SNAT):
+
+config terminal
+ip multicast-routing
+access-list 30 permit 10.5.2.0 0.0.0.63
+ip nat inside source list 30 interface FastEthernet0/0 overload
+
+
+interface FastEthernet0/0
+ip address 193.137.101.252 255.255.255.0
+no shutdown
+ip pim sparse-dense-mode
+ip nat outside
+ip route 193.137.100.128 255.255.255.128 193.137.101.253
+interface FastEthernet0/0
+ip route 193.137.100.0 255.255.255.128 193.137.101.254
+
+interface FastEthernet0/1
+ip address 10.5.2.62 255.255.255.192
+no shutdown
+ip pim sparse-dense-mode
+ip nat inside
+end
+
+copy running-config startup-config

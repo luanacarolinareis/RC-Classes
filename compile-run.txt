@@ -1,0 +1,20 @@
+"class_server.c"
+
+- Compile: gcc -o class_server class_server.c
+- Run with server: ./class_server 6000 5000 config.txt
+
+NOTE: 'config.txt' needs to be in the /home folder too.
+
+
+
+"class_client.c"
+
+- Compile: gcc -pthread -o class_client class_client.c
+- Run with client 1/2 of type 'aluno/professor': ./class_client 193.137.100.1 6000
+
+
+
+"admin_client.c"
+
+- Compile: gcc -o admin_client admin_client.c
+- Run with client 3 of type 'administrador': ./admin_client 193.137.100.1 5000
