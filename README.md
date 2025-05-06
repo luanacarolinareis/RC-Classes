@@ -31,41 +31,38 @@ O **RC-Classes** é um sistema online de turmas que permite a gestão e comunica
 ## ⚙️ Como Executar
 
 ### 1. Clone este repositório:
-git clone https://github.com/luanacarolinareis/RC-Classes.git
+- git clone https://github.com/luanacarolinareis/RC-Classes.git
 
 ### 2. Compilar os programas
-Os comandos de compilação e execução encontram-se detalhados no ficheiro [`compile-run.txt`](compile-run.txt)[1].  
-Resumo dos passos principais:
-
+- Os comandos de compilação e execução encontram-se detalhados no ficheiro [`compile-run.txt`](compile-run.txt)[1].  
+- Resumo dos passos principais:
 gcc -o class_server class_server.c
 gcc -pthread -o class_client class_client.c
 gcc -o admin_client admin_client.c
 
 ### 3. Executar o servidor
 
-./class_server 6000 5000 config.txt
+- ./class_server 6000 5000 config.txt
 
 ### 4. Executar os clientes
 
 - **Cliente (Aluno/Professor):**
-./class_client 193.137.100.1 6000
+  ./class_client 193.137.100.1 6000
 
 - **Cliente Administrador:**
-./admin_client 193.137.100.1 5000
+  ./admin_client 193.137.100.1 5000
 
 ### 5. Configuração de utilizadores
 
-O ficheiro [`config.txt`](config.txt)[2] contém os utilizadores registados no sistema, no formato:
-nome;password;tipo
-
-Exemplo:
-jorge;mtu67;administrador
-joana;azq1212;professor
-henrique;hcm04;aluno
+- O ficheiro [`config.txt`](config.txt)[2] contém os utilizadores registados no sistema, no formato: nome;password;tipo
+- Exemplo:
+  jorge;mtu67;administrador
+  joana;azq1212;professor
+  henrique;hcm04;aluno
 
 ### 6. Configuração de rede e routers
 
-Os ficheiros [`config-commands.txt`](config-commands.txt)[3] e o relatório detalham a configuração de rede dos clientes, servidor e routers, incluindo endereçamentos IP, gateways e comandos para os routers, essenciais para o funcionamento do sistema numa rede simulada.
+- Os ficheiros [`config-commands.txt`](config-commands.txt)[3] e o relatório detalham a configuração de rede dos clientes, servidor e routers, incluindo endereçamentos IP, gateways e comandos para os routers, essenciais para o funcionamento do sistema numa rede simulada.
 
 ---
 
